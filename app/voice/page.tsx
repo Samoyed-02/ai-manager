@@ -161,7 +161,7 @@ export default function VoicePage() {
                 callbacks: {
                     onopen: () => setStatus("연결됨 · 말해보세요"),
                     onmessage: onMessage,
-                    onerror: (e) => appendText("❌", e.message),
+                    onerror: (e) => appendText("❌", e.message || "연결 오류"),
                     onclose: (e) => {
                         if (r.current.stopping) return;
                         r.current.closed = true;
@@ -203,15 +203,23 @@ export default function VoicePage() {
             const c = r.current;
             if (c.stopping || !c.ctx) return;
 
-            if (c.closed) {
-                setStatus("재연결 중");
+            if (c.ctx.state !== "running") await c.ctx.resume().catch(() => {});
+
+            const track = c.stream?.getAudioTracks()[0];
+            const problems: string[] = [];
+            if (c.closed) problems.push("연결");
+            if (c.ctx.state !== "running") problems.push("오디오");
+            if (!track || track.readyState !== "live") problems.push("마이크 종료");
+            else if (track.muted) problems.push("마이크 음소거");
+
+            if (problems.length > 0) {
+                setStatus(`재연결 중 (${problems.join(", ")})`);
                 c.stopping = true;
                 cleanup();
                 await start();
                 return;
             }
 
-            if (c.ctx.state !== "running") await c.ctx.resume().catch(() => {});
             await requestWakeLock();
         };
 
