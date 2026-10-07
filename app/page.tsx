@@ -13,6 +13,13 @@ export default function Home() {
             </Link>
 
             <Link
+                href="/chat"
+                className="rounded-lg bg-gray-700 py-3 text-center font-bold text-white"
+            >
+                💬 텍스트 모드
+            </Link>
+
+            <Link
                 href="/mic-test"
                 className="rounded-lg bg-blue-600 py-3 text-center font-bold text-white"
             >
