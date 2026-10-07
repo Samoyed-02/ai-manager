@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { GoogleGenAI, Modality, type LiveServerMessage, type Session } from "@google/genai";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const MODEL = "gemini-3.1-flash-live-preview";
 
@@ -22,14 +23,30 @@ function base64ToFloat32(b64: string) {
     return out;
 }
 
+function getPasscode() {
+    let p: string | null = null;
+    try {
+        p = localStorage.getItem("passcode");
+    } catch {}
+    if (!p) {
+        p = prompt("접속 코드를 입력하세요") ?? "";
+        try {
+            localStorage.setItem("passcode", p);
+        } catch {}
+    }
+    return p;
+}
+
 type Refs = {
     session?: Session;
     ctx?: AudioContext;
     stream?: MediaStream;
     node?: AudioWorkletNode;
+    wakeLock?: WakeLockSentinel;
     nextTime: number;
     sources: Set<AudioBufferSourceNode>;
     stopping?: boolean;
+    closed?: boolean;
 };
 
 export default function VoicePage() {
@@ -45,7 +62,8 @@ export default function VoicePage() {
         });
 
     const play = (b64: string) => {
-        const ctx = r.current.ctx!;
+        const ctx = r.current.ctx;
+        if (!ctx) return;
         const data = base64ToFloat32(b64);
         const buf = ctx.createBuffer(1, data.length, 24000);
         buf.copyToChannel(data, 0);
@@ -69,6 +87,29 @@ export default function VoicePage() {
         r.current.nextTime = 0;
     };
 
+    const requestWakeLock = async () => {
+        try {
+            r.current.wakeLock = await navigator.wakeLock.request("screen");
+        } catch {}
+    };
+
+    const cleanup = () => {
+        const c = r.current;
+        c.session?.close();
+        c.node?.disconnect();
+        c.stream?.getTracks().forEach((t) => t.stop());
+        stopPlayback();
+        c.ctx?.close().catch(() => {});
+        c.wakeLock?.release().catch(() => {});
+        Object.assign(c, {
+            session: undefined,
+            ctx: undefined,
+            stream: undefined,
+            node: undefined,
+            wakeLock: undefined,
+        });
+    };
+
     const onMessage = (msg: LiveServerMessage) => {
         const sc = msg.serverContent;
         if (!sc) return;
@@ -82,19 +123,33 @@ export default function VoicePage() {
 
     const start = async () => {
         r.current.stopping = false;
+        r.current.closed = false;
         try {
             setStatus("연결 중");
+
+            const res = await fetch("/api/live-token", {
+                method: "POST",
+                headers: { "x-app-passcode": getPasscode() },
+            });
+            if (res.status === 401) {
+                try {
+                    localStorage.removeItem("passcode");
+                } catch {}
+                throw new Error("접속 코드가 틀렸습니다. 다시 시도하세요.");
+            }
+            const { token } = await res.json();
+
             const ctx = new AudioContext();
+            r.current.ctx = ctx;
             await ctx.resume();
             await ctx.audioWorklet.addModule("/pcm-recorder.js");
 
             const stream = await navigator.mediaDevices.getUserMedia({
                 audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
             });
+            r.current.stream = stream;
 
-            const { token } = await fetch("/api/live-token", { method: "POST" }).then((res) => res.json());
             const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: "v1alpha" } });
-
             const session = await ai.live.connect({
                 model: MODEL,
                 config: {
@@ -108,10 +163,13 @@ export default function VoicePage() {
                     onmessage: onMessage,
                     onerror: (e) => appendText("❌", e.message),
                     onclose: (e) => {
-                        if (!r.current.stopping) setStatus(`종료 (code ${e.code}) ${e.reason ?? ""}`);
+                        if (r.current.stopping) return;
+                        r.current.closed = true;
+                        setStatus(`연결 끊김 (code ${e.code}) · 화면으로 돌아오면 재연결`);
                     },
                 },
             });
+            r.current.session = session;
 
             const source = ctx.createMediaStreamSource(stream);
             const node = new AudioWorkletNode(ctx, "pcm-recorder");
@@ -119,32 +177,57 @@ export default function VoicePage() {
                 session.sendRealtimeInput({
                     audio: { data: toBase64(e.data), mimeType: "audio/pcm;rate=16000" },
                 });
+            r.current.node = node;
 
             const mute = ctx.createGain();
             mute.gain.value = 0;
             source.connect(node).connect(mute).connect(ctx.destination);
 
-            Object.assign(r.current, { session, ctx, stream, node });
+            await requestWakeLock();
         } catch (e) {
+            r.current.stopping = true;
+            cleanup();
             setStatus(`실패: ${(e as Error).message}`);
         }
     };
 
     const stop = () => {
-        const c = r.current;
         r.current.stopping = true;
-        c.session?.close();
-        c.node?.disconnect();
-        c.stream?.getTracks().forEach((t) => t.stop());
-        stopPlayback();
-        c.ctx?.close();
+        cleanup();
         setStatus("대기");
     };
 
-    const running = status !== "대기" && !status.startsWith("실패") && !status.startsWith("종료");
+    useEffect(() => {
+        const onVisible = async () => {
+            if (document.visibilityState !== "visible") return;
+            const c = r.current;
+            if (c.stopping || !c.ctx) return;
+
+            if (c.closed) {
+                setStatus("재연결 중");
+                c.stopping = true;
+                cleanup();
+                await start();
+                return;
+            }
+
+            if (c.ctx.state !== "running") await c.ctx.resume().catch(() => {});
+            await requestWakeLock();
+        };
+
+        document.addEventListener("visibilitychange", onVisible);
+        return () => document.removeEventListener("visibilitychange", onVisible);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const running =
+        status !== "대기" && !status.startsWith("실패");
 
     return (
         <main className="mx-auto max-w-md p-4">
+            <Link href="/" className="mb-2 inline-block text-sm text-gray-400">
+                ← 홈
+            </Link>
             <h1 className="mb-2 text-xl font-bold">통화 모드</h1>
             <p className="mb-4 text-sm text-gray-400">{status}</p>
             <button
