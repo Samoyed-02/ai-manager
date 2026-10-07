@@ -47,6 +47,8 @@ type Refs = {
     sources: Set<AudioBufferSourceNode>;
     stopping?: boolean;
     closed?: boolean;
+    reconnecting?: boolean;
+    attempts?: number;
 };
 
 export default function VoicePage() {
@@ -159,13 +161,20 @@ export default function VoicePage() {
                     outputAudioTranscription: {},
                 },
                 callbacks: {
-                    onopen: () => setStatus("연결됨 · 말해보세요"),
+                    onopen: () => {
+                        r.current.attempts = 0;
+                        setStatus("연결됨 · 말해보세요");
+                    },
                     onmessage: onMessage,
                     onerror: (e) => appendText("❌", e.message || "연결 오류"),
                     onclose: (e) => {
                         if (r.current.stopping) return;
                         r.current.closed = true;
-                        setStatus(`연결 끊김 (code ${e.code}) · 화면으로 돌아오면 재연결`);
+                        if (document.visibilityState === "visible") {
+                            reconnect(`연결 끊김 ${e.code}`);
+                        } else {
+                            setStatus(`연결 끊김 (code ${e.code}) · 화면으로 돌아오면 재연결`);
+                        }
                     },
                 },
             });
@@ -197,6 +206,26 @@ export default function VoicePage() {
         setStatus("대기");
     };
 
+    const reconnect = async (reason: string) => {
+        const c = r.current;
+        if (c.reconnecting) return;
+        c.attempts = (c.attempts ?? 0) + 1;
+        if (c.attempts > 3) {
+            c.stopping = true;
+            cleanup();
+            setStatus("실패: 재연결 3회 실패. 다시 시작을 눌러주세요.");
+            c.attempts = 0;
+            return;
+        }
+        c.reconnecting = true;
+        setStatus(`재연결 중 (${reason}) · ${c.attempts}회차`);
+        c.stopping = true;
+        cleanup();
+        await new Promise((res) => setTimeout(res, 1000));
+        await start();
+        c.reconnecting = false;
+    };
+
     useEffect(() => {
         const onVisible = async () => {
             if (document.visibilityState !== "visible") return;
@@ -213,10 +242,7 @@ export default function VoicePage() {
             else if (track.muted) problems.push("마이크 음소거");
 
             if (problems.length > 0) {
-                setStatus(`재연결 중 (${problems.join(", ")})`);
-                c.stopping = true;
-                cleanup();
-                await start();
+                await reconnect(problems.join(", "));
                 return;
             }
 
