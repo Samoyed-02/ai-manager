@@ -108,7 +108,7 @@ export default function ChatPage() {
                             {m.content}
                         </div>
                     ) : (
-                        <div key={i} className="prose prose-invert max-w-none prose-pre:overflow-x-auto">
+                        <div key={i} className="prose prose-invert max-w-none prose-pre:overflow-x-auto prose-code:before:content-none prose-code:after:content-none">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content || "…"}</ReactMarkdown>
                         </div>
                     ),
