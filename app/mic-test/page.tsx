@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 type Log = { t: string; msg: string };
@@ -85,6 +86,7 @@ export default function MicTestPage() {
     return (
         <main className="mx-auto max-w-md p-4 font-mono text-sm">
             <h1 className="mb-3 text-lg font-bold">Mic / Lock Test</h1>
+            <Link href="/" className="mb-2 inline-block text-sm text-gray-400">← 홈</Link>
             <button
                 onClick={running ? stop : start}
                 className="mb-4 w-full rounded-lg bg-blue-600 py-3 font-bold text-white"
