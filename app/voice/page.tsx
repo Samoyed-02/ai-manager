@@ -29,6 +29,7 @@ type Refs = {
     node?: AudioWorkletNode;
     nextTime: number;
     sources: Set<AudioBufferSourceNode>;
+    stopping?: boolean;
 };
 
 export default function VoicePage() {
@@ -80,6 +81,7 @@ export default function VoicePage() {
     };
 
     const start = async () => {
+        r.current.stopping = false;
         try {
             setStatus("연결 중");
             const ctx = new AudioContext();
@@ -105,7 +107,9 @@ export default function VoicePage() {
                     onopen: () => setStatus("연결됨 · 말해보세요"),
                     onmessage: onMessage,
                     onerror: (e) => appendText("❌", e.message),
-                    onclose: (e) => setStatus(`종료 (code ${e.code}) ${e.reason ?? ""}`),
+                    onclose: (e) => {
+                        if (!r.current.stopping) setStatus(`종료 (code ${e.code}) ${e.reason ?? ""}`);
+                    },
                 },
             });
 
@@ -128,6 +132,7 @@ export default function VoicePage() {
 
     const stop = () => {
         const c = r.current;
+        r.current.stopping = true;
         c.session?.close();
         c.node?.disconnect();
         c.stream?.getTracks().forEach((t) => t.stop());
