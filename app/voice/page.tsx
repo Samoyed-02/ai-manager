@@ -1,10 +1,59 @@
 "use client";
 
 import Link from "next/link";
-import { GoogleGenAI, Modality, type LiveServerMessage, type Session } from "@google/genai";
+import {
+    GoogleGenAI,
+    Modality,
+    Type,
+    type LiveServerMessage,
+    type LiveServerToolCall,
+    type Session,
+} from "@google/genai";
 import { useEffect, useRef, useState } from "react";
+import { apiFetch, getPasscode } from "@/lib/api";
+import { TurnController, type TurnState } from "@/lib/turn";
 
-const MODEL = "gemini-3.1-flash-live-preview";
+const MODEL = "gemini-3.8-live";
+const API_VERSION = "v1beta";
+
+const SYSTEM_INSTRUCTION = `너는 사용자의 개인 AI 매니저야. 사용자는 주로 이동 중에 이어폰으로 너와 대화해.
+
+- 한국어로 짧고 자연스럽게 말해. 사용자는 화면을 보지 않으니 긴 목록이나 코드를 읽어주지 마.
+- 문서, 기획서, 코드, 정리본처럼 길고 공들인 결과물이 필요한 요청은 직접 답하지 말고 delegate_task 도구로 맡겨.
+- delegate_task를 쓸 때는, 작업자가 이 대화를 듣지 못한다는 점을 기억해. 대화에서 나온 아이디어와 조건, 세부 내용을 빠짐없이 context에 정리해서 넘겨.
+- 맡긴 뒤에는 "맡겨뒀어요, 나중에 문서함에서 확인하세요"처럼 짧게 알려줘.
+- 맡긴 작업이 어떻게 됐는지 물으면 list_recent_tasks를 써.`;
+
+const TOOLS = [
+    {
+        functionDeclarations: [
+            {
+                name: "delegate_task",
+                description:
+                    "문서, 기획서, 코드, 정리본 등 시간이 걸리는 결과물 작성을 백그라운드 작업자에게 맡긴다.",
+                parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                        instruction: {
+                            type: Type.STRING,
+                            description: "무엇을 만들어야 하는지 한두 문장으로 명확하게",
+                        },
+                        context: {
+                            type: Type.STRING,
+                            description:
+                                "작업자는 대화를 듣지 못하므로, 대화에서 나온 아이디어, 조건, 세부 내용을 빠짐없이 정리한 것",
+                        },
+                    },
+                    required: ["instruction", "context"],
+                },
+            },
+            {
+                name: "list_recent_tasks",
+                description: "최근에 맡긴 작업들의 진행 상태를 확인한다.",
+            },
+        ],
+    },
+];
 
 function toBase64(buf: ArrayBuffer) {
     const bytes = new Uint8Array(buf);
@@ -21,20 +70,6 @@ function base64ToFloat32(b64: string) {
     const out = new Float32Array(pcm.length);
     for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] / 32768;
     return out;
-}
-
-function getPasscode() {
-    let p: string | null = null;
-    try {
-        p = localStorage.getItem("passcode");
-    } catch {}
-    if (!p) {
-        p = prompt("접속 코드를 입력하세요") ?? "";
-        try {
-            localStorage.setItem("passcode", p);
-        } catch {}
-    }
-    return p;
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string) {
@@ -65,6 +100,8 @@ export default function VoicePage() {
     const [active, setActive] = useState(false);
     const [needTap, setNeedTap] = useState(false);
     const [lines, setLines] = useState<string[]>([]);
+    const [turn, setTurn] = useState<TurnState>("idle");
+    const awaitingFollowUp = useRef(false);
     const r = useRef<Refs>({
         nextTime: 0,
         sources: new Set(),
@@ -82,6 +119,50 @@ export default function VoicePage() {
         });
 
     // ---------- 재생 ----------
+    const stopPlayback = () => {
+        r.current.sources.forEach((s) => {
+            try {
+                s.stop();
+            } catch {}
+        });
+        r.current.sources.clear();
+        r.current.nextTime = 0;
+    };
+
+    const beep = (freq: number) => {
+        const ctx = r.current.ctx;
+        if (!ctx) return;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        gain.gain.value = 0.08;
+        osc.frequency.value = freq;
+        osc.connect(gain).connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.08);
+    };
+
+    // ---------- 말차례 ----------
+    const turnRef = useRef<TurnController | null>(null);
+    if (!turnRef.current) {
+        turnRef.current = new TurnController({
+            onStart: () => {
+                stopPlayback();
+                r.current.session?.sendRealtimeInput({ activityStart: {} });
+            },
+            onAudio: (buf) =>
+                r.current.session?.sendRealtimeInput({
+                    audio: { data: toBase64(buf), mimeType: "audio/pcm;rate=16000" },
+                }),
+            onEnd: () => r.current.session?.sendRealtimeInput({ activityEnd: {} }),
+            onState: setTurn,
+        });
+    }
+
+    const armFollowUp = () => {
+        if (!r.current.active || !r.current.session) return;
+        turnRef.current?.arm(8000);
+    };
+
     const play = (b64: string) => {
         const ctx = r.current.ctx;
         if (!ctx) return;
@@ -95,20 +176,71 @@ export default function VoicePage() {
         src.start(r.current.nextTime);
         r.current.nextTime += buf.duration;
         r.current.sources.add(src);
-        src.onended = () => r.current.sources.delete(src);
+        src.onended = () => {
+            r.current.sources.delete(src);
+            if (r.current.sources.size === 0 && awaitingFollowUp.current) {
+                awaitingFollowUp.current = false;
+                armFollowUp();
+            }
+        };
     };
 
-    const stopPlayback = () => {
-        r.current.sources.forEach((s) => {
-            try {
-                s.stop();
-            } catch {}
-        });
-        r.current.sources.clear();
-        r.current.nextTime = 0;
+    // ---------- 도구 ----------
+    const handleToolCall = async (toolCall: LiveServerToolCall) => {
+        const session = r.current.session;
+        if (!session) return;
+
+        const functionResponses = await Promise.all(
+            (toolCall.functionCalls ?? []).map(async (fc) => {
+                try {
+                    if (fc.name === "delegate_task") {
+                        const args = fc.args as { instruction: string; context?: string };
+                        const res = await apiFetch("/tasks", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ instruction: args.instruction, context: args.context }),
+                        });
+                        const task = await res.json();
+                        appendText("📝", `작업 접수: ${args.instruction}`);
+                        return {
+                            id: fc.id,
+                            name: fc.name,
+                            response: {
+                                result: "접수 완료. 백그라운드에서 작성 중이고, 끝나면 문서함에서 볼 수 있음",
+                                taskId: task.id,
+                            },
+                        };
+                    }
+
+                    if (fc.name === "list_recent_tasks") {
+                        const res = await apiFetch("/tasks");
+                        const list = (await res.json()) as { instruction: string; status: string }[];
+                        return {
+                            id: fc.id,
+                            name: fc.name,
+                            response: {
+                                tasks: list.slice(0, 5).map((t) => ({
+                                    instruction: t.instruction.slice(0, 60),
+                                    status: t.status,
+                                })),
+                            },
+                        };
+                    }
+
+                    return { id: fc.id, name: fc.name, response: { error: "알 수 없는 도구" } };
+                } catch (e) {
+                    appendText("❌", `도구 실패: ${(e as Error).message}`);
+                    return { id: fc.id, name: fc.name, response: { error: (e as Error).message } };
+                }
+            }),
+        );
+
+        session.sendToolResponse({ functionResponses });
     };
 
     const onMessage = (msg: LiveServerMessage) => {
+        if (msg.toolCall) handleToolCall(msg.toolCall);
+
         const sc = msg.serverContent;
         if (!sc) return;
         if (sc.interrupted) stopPlayback();
@@ -117,6 +249,10 @@ export default function VoicePage() {
         });
         if (sc.inputTranscription?.text) appendText("🙋", sc.inputTranscription.text);
         if (sc.outputTranscription?.text) appendText("🤖", sc.outputTranscription.text);
+        if (sc.turnComplete) {
+            if (r.current.sources.size === 0) armFollowUp();
+            else awaitingFollowUp.current = true;
+        }
     };
 
     // ---------- 화면 꺼짐 방지 ----------
@@ -152,13 +288,7 @@ export default function VoicePage() {
 
         const source = ctx.createMediaStreamSource(stream);
         const node = new AudioWorkletNode(ctx, "pcm-recorder");
-        node.port.onmessage = (e) => {
-            try {
-                r.current.session?.sendRealtimeInput({
-                    audio: { data: toBase64(e.data), mimeType: "audio/pcm;rate=16000" },
-                });
-            } catch {}
-        };
+        node.port.onmessage = (e) => turnRef.current?.feed(e.data);
         c.node = node;
 
         const mute = ctx.createGain();
@@ -181,6 +311,7 @@ export default function VoicePage() {
         const s = c.session;
         c.session = undefined;
         c.sessionId++;
+        turnRef.current?.disarm();
         try {
             s?.close();
         } catch {}
@@ -205,7 +336,15 @@ export default function VoicePage() {
         }
         const { token } = await res.json();
 
-        const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: "v1alpha" } });
+        let userContext = "";
+        try {
+            const ctxRes = await withTimeout(apiFetch("/context/voice"), 5000, "맥락 조회");
+            userContext = (await ctxRes.json()).text;
+        } catch {
+            // 맥락을 못 가져와도 통화는 진행
+        }
+
+        const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: API_VERSION } });
         const id = ++c.sessionId;
 
         const session = await withTimeout(
@@ -213,9 +352,13 @@ export default function VoicePage() {
                 model: MODEL,
                 config: {
                     responseModalities: [Modality.AUDIO],
-                    systemInstruction: "너는 사용자의 개인 AI 매니저야. 한국어로 짧고 자연스럽게 대답해.",
+                    systemInstruction: userContext
+                        ? `${SYSTEM_INSTRUCTION}\n\n## 사용자 정보\n${userContext}`
+                        : SYSTEM_INSTRUCTION,
+                    tools: TOOLS,
                     inputAudioTranscription: {},
                     outputAudioTranscription: {},
+                    realtimeInputConfig: { automaticActivityDetection: { disabled: true } },
                 },
                 callbacks: {
                     onmessage: (m) => {
@@ -225,6 +368,7 @@ export default function VoicePage() {
                     onclose: (e) => {
                         if (id !== r.current.sessionId || !r.current.active) return;
                         r.current.session = undefined;
+                        turnRef.current?.disarm();
                         if (document.visibilityState === "visible") {
                             recover(`연결 끊김 ${e.code}`);
                         } else {
@@ -239,7 +383,7 @@ export default function VoicePage() {
 
         c.session = session;
         c.attempts = 0;
-        setStatus("연결됨 · 말해보세요");
+        setStatus("연결됨 · 버튼을 누르고 말하세요");
     };
 
     // ---------- 시작 / 복구 / 종료 ----------
@@ -294,7 +438,6 @@ export default function VoicePage() {
                 } catch {}
             }
 
-            setStatus("연결됨 · 말해보세요");
             await requestWakeLock();
         } catch (e) {
             closeSession();
@@ -343,12 +486,26 @@ export default function VoicePage() {
             <p className="mb-4 text-sm text-gray-400">{status}</p>
             <button
                 onClick={onButton}
-                className={`mb-6 w-full rounded-full py-4 text-lg font-bold text-white ${
+                className={`mb-4 w-full rounded-full py-4 text-lg font-bold text-white ${
                     needTap ? "bg-amber-500" : active ? "bg-red-600" : "bg-blue-600"
                 }`}
             >
                 {needTap ? "🔄 다시 시작" : active ? "통화 종료" : "🎙️ 통화 시작"}
             </button>
+            {active && !needTap && (
+                <button
+                    onClick={() => {
+                        beep(880);
+                        turnRef.current?.arm(5000);
+                    }}
+                    disabled={turn !== "idle"}
+                    className={`mb-6 w-full rounded-full py-6 text-lg font-bold text-white ${
+                        turn === "speaking" ? "bg-red-500" : turn === "armed" ? "bg-green-600" : "bg-gray-700"
+                    }`}
+                >
+                    {turn === "speaking" ? "🔴 듣는 중…" : turn === "armed" ? "🟢 말하세요" : "🎙️ 눌러서 말하기"}
+                </button>
+            )}
             <ul className="space-y-2 text-sm">
                 {lines.map((l, i) => (
                     <li key={i}>{l}</li>
