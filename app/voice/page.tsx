@@ -2,16 +2,18 @@
 
 import Link from "next/link";
 import {
+    type FunctionDeclaration,
     GoogleGenAI,
     Modality,
-    Type,
     type LiveServerMessage,
     type LiveServerToolCall,
     type Session,
 } from "@google/genai";
 import { useEffect, useRef, useState } from "react";
-import { apiFetch, getPasscode } from "@/lib/api";
+import { apiFetch, authFetch } from "@/lib/api";
+import { addFragment, beginCall, type CallRecord, endCall, flushCalls, saveCall } from "@/lib/call-record";
 import { TurnController, type TurnState } from "@/lib/turn";
+import { loadDeclarations, LOCAL_DECLARATIONS, runTool } from "@/lib/voice-tools";
 
 const MODEL = "gemini-3.8-live";
 const API_VERSION = "v1beta";
@@ -19,41 +21,13 @@ const API_VERSION = "v1beta";
 const SYSTEM_INSTRUCTION = `너는 사용자의 개인 AI 매니저야. 사용자는 주로 이동 중에 이어폰으로 너와 대화해.
 
 - 한국어로 짧고 자연스럽게 말해. 사용자는 화면을 보지 않으니 긴 목록이나 코드를 읽어주지 마.
-- 문서, 기획서, 코드, 정리본처럼 길고 공들인 결과물이 필요한 요청은 직접 답하지 말고 delegate_task 도구로 맡겨.
-- delegate_task를 쓸 때는, 작업자가 이 대화를 듣지 못한다는 점을 기억해. 대화에서 나온 아이디어와 조건, 세부 내용을 빠짐없이 context에 정리해서 넘겨.
+- 문서, 기획서, 코드, 정리본처럼 길고 공들인 결과물이 필요한 요청은 직접 답하지 말고 create_task 도구로 맡겨.
+- create_task를 쓸 때는, 작업자가 이 대화를 듣지 못한다는 점을 기억해. 대화에서 나온 아이디어와 조건, 세부 내용을 빠짐없이 context에 정리해서 넘겨.
 - 맡긴 뒤에는 "맡겨뒀어요, 나중에 문서함에서 확인하세요"처럼 짧게 알려줘.
-- 맡긴 작업이 어떻게 됐는지 물으면 list_recent_tasks를 써.`;
+- 맡긴 작업이 어떻게 됐는지 물으면 list_recent_tasks를 써.
+- 기억, 루틴, 활동 기록, 목표는 해당 도구로 처리해. 도구가 실패하면 사유를 짧게 알려줘.`;
 
-const TOOLS = [
-    {
-        functionDeclarations: [
-            {
-                name: "delegate_task",
-                description:
-                    "문서, 기획서, 코드, 정리본 등 시간이 걸리는 결과물 작성을 백그라운드 작업자에게 맡긴다.",
-                parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                        instruction: {
-                            type: Type.STRING,
-                            description: "무엇을 만들어야 하는지 한두 문장으로 명확하게",
-                        },
-                        context: {
-                            type: Type.STRING,
-                            description:
-                                "작업자는 대화를 듣지 못하므로, 대화에서 나온 아이디어, 조건, 세부 내용을 빠짐없이 정리한 것",
-                        },
-                    },
-                    required: ["instruction", "context"],
-                },
-            },
-            {
-                name: "list_recent_tasks",
-                description: "최근에 맡긴 작업들의 진행 상태를 확인한다.",
-            },
-        ],
-    },
-];
+const TOOLS_UNAVAILABLE = "\n\n지금은 서버 도구를 쓸 수 없어. 문서 맡기기, 기억, 루틴, 활동 기록, 목표 요청을 받으면 지금은 처리할 수 없다고 알려줘.";
 
 function toBase64(buf: ArrayBuffer) {
     const bytes = new Uint8Array(buf);
@@ -81,6 +55,13 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string) {
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
+const sendCall = (call: CallRecord) =>
+    apiFetch("/voice/calls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(call),
+    });
+
 type Refs = {
     session?: Session;
     ctx?: AudioContext;
@@ -93,6 +74,7 @@ type Refs = {
     reconnecting: boolean;
     attempts: number;
     sessionId: number;
+    tools?: FunctionDeclaration[];
 };
 
 export default function VoicePage() {
@@ -117,6 +99,13 @@ export default function VoicePage() {
             if (last?.startsWith(who)) return [...p.slice(0, -1), last + text];
             return [...p.slice(-50), `${who} ${text}`];
         });
+
+    const finishCall = async () => {
+        endCall();
+        const result = await flushCalls(sendCall);
+        if (result === "retry") appendText("⚠️", "통화 기록을 보내지 못했어요. 다음에 통화 화면을 열 때 다시 보냅니다.");
+        else if (result === "dropped") appendText("⚠️", "서버가 통화 기록을 거부해 저장하지 못했어요.");
+    };
 
     // ---------- 재생 ----------
     const stopPlayback = () => {
@@ -193,41 +182,9 @@ export default function VoicePage() {
         const functionResponses = await Promise.all(
             (toolCall.functionCalls ?? []).map(async (fc) => {
                 try {
-                    if (fc.name === "delegate_task") {
-                        const args = fc.args as { instruction: string; context?: string };
-                        const res = await apiFetch("/tasks", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ instruction: args.instruction, context: args.context }),
-                        });
-                        const task = await res.json();
-                        appendText("📝", `작업 접수: ${args.instruction}`);
-                        return {
-                            id: fc.id,
-                            name: fc.name,
-                            response: {
-                                result: "접수 완료. 백그라운드에서 작성 중이고, 끝나면 문서함에서 볼 수 있음",
-                                taskId: task.id,
-                            },
-                        };
-                    }
-
-                    if (fc.name === "list_recent_tasks") {
-                        const res = await apiFetch("/tasks");
-                        const list = (await res.json()) as { instruction: string; status: string }[];
-                        return {
-                            id: fc.id,
-                            name: fc.name,
-                            response: {
-                                tasks: list.slice(0, 5).map((t) => ({
-                                    instruction: t.instruction.slice(0, 60),
-                                    status: t.status,
-                                })),
-                            },
-                        };
-                    }
-
-                    return { id: fc.id, name: fc.name, response: { error: "알 수 없는 도구" } };
+                    const { response, note } = await runTool(apiFetch, fc.name ?? "", fc.args);
+                    if (note) appendText(response.error ? "❌" : "🛠️", `${note} `);
+                    return { id: fc.id, name: fc.name, response };
                 } catch (e) {
                     appendText("❌", `도구 실패: ${(e as Error).message}`);
                     return { id: fc.id, name: fc.name, response: { error: (e as Error).message } };
@@ -235,7 +192,8 @@ export default function VoicePage() {
             }),
         );
 
-        session.sendToolResponse({ functionResponses });
+        // 도구 실행 중 재연결되면 닫힌 세션이라 보낼 곳이 없다
+        if (r.current.session === session) session.sendToolResponse({ functionResponses });
     };
 
     const onMessage = (msg: LiveServerMessage) => {
@@ -247,9 +205,16 @@ export default function VoicePage() {
         sc.modelTurn?.parts?.forEach((p) => {
             if (p.inlineData?.data) play(p.inlineData.data);
         });
-        if (sc.inputTranscription?.text) appendText("🙋", sc.inputTranscription.text);
-        if (sc.outputTranscription?.text) appendText("🤖", sc.outputTranscription.text);
+        if (sc.inputTranscription?.text) {
+            appendText("🙋", sc.inputTranscription.text);
+            addFragment("user", sc.inputTranscription.text);
+        }
+        if (sc.outputTranscription?.text) {
+            appendText("🤖", sc.outputTranscription.text);
+            addFragment("assistant", sc.outputTranscription.text);
+        }
         if (sc.turnComplete) {
+            saveCall();
             if (r.current.sources.size === 0) armFollowUp();
             else awaitingFollowUp.current = true;
         }
@@ -321,19 +286,10 @@ export default function VoicePage() {
         const c = r.current;
 
         const res = await withTimeout(
-            fetch("/api/live-token", {
-                method: "POST",
-                headers: { "x-app-passcode": getPasscode() },
-            }),
+            authFetch("/api/live-token", { method: "POST" }),
             8000,
             "토큰 발급",
         );
-        if (res.status === 401) {
-            try {
-                localStorage.removeItem("passcode");
-            } catch {}
-            throw new Error("접속 코드가 틀렸습니다");
-        }
         const { token } = await res.json();
 
         let userContext = "";
@@ -344,6 +300,14 @@ export default function VoicePage() {
             // 맥락을 못 가져와도 통화는 진행
         }
 
+        if (!c.tools) {
+            try {
+                c.tools = await withTimeout(loadDeclarations(apiFetch), 5000, "도구 조회");
+            } catch {
+                appendText("⚠️", "도구를 불러오지 못해 작업 조회만 쓸 수 있어요. ");
+            }
+        }
+
         const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: API_VERSION } });
         const id = ++c.sessionId;
 
@@ -352,10 +316,11 @@ export default function VoicePage() {
                 model: MODEL,
                 config: {
                     responseModalities: [Modality.AUDIO],
-                    systemInstruction: userContext
-                        ? `${SYSTEM_INSTRUCTION}\n\n## 사용자 정보\n${userContext}`
-                        : SYSTEM_INSTRUCTION,
-                    tools: TOOLS,
+                    systemInstruction:
+                        SYSTEM_INSTRUCTION +
+                        (c.tools ? "" : TOOLS_UNAVAILABLE) +
+                        (userContext ? `\n\n## 사용자 정보\n${userContext}` : ""),
+                    tools: [{ functionDeclarations: c.tools ?? LOCAL_DECLARATIONS }],
                     inputAudioTranscription: {},
                     outputAudioTranscription: {},
                     realtimeInputConfig: { automaticActivityDetection: { disabled: true } },
@@ -393,6 +358,7 @@ export default function VoicePage() {
         c.attempts = 0;
         setActive(true);
         setNeedTap(false);
+        beginCall();
         try {
             setStatus("연결 중");
             closeSession();
@@ -407,6 +373,7 @@ export default function VoicePage() {
             teardownAudio();
             releaseWakeLock();
             setStatus(`실패: ${(e as Error).message}`);
+            finishCall();
         }
     };
 
@@ -456,10 +423,14 @@ export default function VoicePage() {
         teardownAudio();
         releaseWakeLock();
         setStatus("대기");
+        finishCall();
     };
 
     useEffect(() => {
+        const refs = r.current;
+        flushCalls(sendCall); // 지난번에 못 보낸 기록
         const onVisible = () => {
+            if (document.visibilityState === "hidden") saveCall();
             if (document.visibilityState !== "visible" || !r.current.active) return;
             const problems: string[] = [];
             if (!r.current.session) problems.push("연결");
@@ -468,7 +439,11 @@ export default function VoicePage() {
             else requestWakeLock();
         };
         document.addEventListener("visibilitychange", onVisible);
-        return () => document.removeEventListener("visibilitychange", onVisible);
+        return () => {
+            document.removeEventListener("visibilitychange", onVisible);
+            // 통화 중 다른 화면으로 나가면 세션과 마이크가 남고 기록도 마무리되지 않는다
+            if (refs.active) stop();
+        };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
