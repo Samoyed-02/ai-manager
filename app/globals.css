@@ -61,7 +61,11 @@ body {
   animation: orb-drift 5s ease-in-out infinite alternate;
 }
 
-/* 이름을 기다리는 중: 빛이 퍼지고, 들리는 소리에 맞춰 커지며 일렁인다 */
+/* "수피"를 기다리는 중: 주변 소리에 아주 살짝만 반응한다 (아직 아무것도 보내지 않는 상태) */
+.orb[data-phase="standby"] {
+  --gain: 0.03;
+}
+/* 부른 뒤 듣는 중: 빛이 퍼지고, 목소리에 맞춰 커지며 일렁인다 */
 .orb[data-phase="listening"] {
   --gain: 0.12;
 }
@@ -82,9 +86,6 @@ body {
 }
 .orb[data-phase="replying"] .orb-shape {
   animation: orb-spin 7s linear infinite;
-}
-.orb[data-phase="paused"] {
-  filter: grayscale(0.85) opacity(0.6);
 }
 
 @keyframes orb-drift {

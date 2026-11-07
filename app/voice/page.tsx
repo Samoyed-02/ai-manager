@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiFetch, authFetch } from "@/lib/api";
 import { addFragment, beginCall, breakTurn, type CallRecord, endCall, flushCalls, saveCall } from "@/lib/call-record";
 import { loadDeclarations, LOCAL_DECLARATIONS, runTool } from "@/lib/voice-tools";
+import { FOLLOW_UP_MS, WAKE_PATTERN, WakeGate } from "@/lib/wake-gate";
 
 const MODEL = "gemini-3.8-live";
 const API_VERSION = "v1beta";
@@ -20,9 +21,8 @@ const WAKE_NAME = "수피";
 
 const SYSTEM_INSTRUCTION = `너의 이름은 ${WAKE_NAME}야. 너는 사용자의 개인 AI 매니저고, 사용자는 주로 이동 중에 이어폰으로 너와 대화해.
 
-- 마이크는 통화 내내 켜져 있어. 사용자가 "${WAKE_NAME}" 또는 "${WAKE_NAME}야"라고 부르며 한 말에만 답해.
-- 이름을 부르지 않은 말, 주변 사람들끼리의 대화, TV나 거리 소리에는 답하지 말고 조용히 있어.
-- 네가 방금 답한 직후 사용자가 이어서 묻는 말에는 이름이 없어도 답해.
+- 너에게는 사용자가 "${WAKE_NAME}"를 부르거나 버튼을 누른 뒤의 소리만 전달돼. 들어온 말에 답해.
+- 다만 주변 사람들끼리의 대화나 TV 소리처럼 분명히 너에게 한 말이 아니면 조용히 있어.
 - 한국어로 짧고 자연스럽게 말해. 사용자는 화면을 보지 않으니 긴 목록이나 코드를 읽어주지 마.
 - 문서, 기획서, 코드, 정리본처럼 길고 공들인 결과물이 필요한 요청은 직접 답하지 말고 create_task 도구로 맡겨.
 - create_task를 쓸 때는, 작업자가 이 대화를 듣지 못한다는 점을 기억해. 대화에서 나온 아이디어와 조건, 세부 내용을 빠짐없이 context에 정리해서 넘겨.
@@ -32,6 +32,24 @@ const SYSTEM_INSTRUCTION = `너의 이름은 ${WAKE_NAME}야. 너는 사용자�
 
 const TOOLS_UNAVAILABLE =
     "\n\n지금은 서버 도구를 쓸 수 없어. 문서 맡기기, 기억, 루틴, 활동 기록, 목표 요청을 받으면 지금은 처리할 수 없다고 알려줘.";
+
+// 브라우저 내장 음성 인식(Web Speech API). TS 기본 타입에 생성자가 없어 쓰는 만큼만 적는다
+type Recognition = {
+    lang: string;
+    continuous: boolean;
+    interimResults: boolean;
+    onresult: ((e: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+    onerror: ((e: { error: string }) => void) | null;
+    onend: (() => void) | null;
+    start(): void;
+    abort(): void;
+};
+
+function createRecognition(): Recognition | null {
+    const w = window as unknown as Record<string, (new () => Recognition) | undefined>;
+    const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    return Ctor ? new Ctor() : null;
+}
 
 function toBase64(buf: ArrayBuffer) {
     const bytes = new Uint8Array(buf);
@@ -87,12 +105,14 @@ type Refs = {
     stream?: MediaStream;
     node?: AudioWorkletNode;
     out?: AnalyserNode;
+    gate?: WakeGate;
+    recognition?: Recognition;
     wakeLock?: WakeLockSentinel;
     raf?: number;
     nextTime: number;
     sources: Set<AudioBufferSourceNode>;
     active: boolean;
-    paused: boolean;
+    awake: boolean;
     inLevel: number;
     reconnecting: boolean;
     attempts: number;
@@ -104,7 +124,7 @@ export default function VoicePage() {
     const [status, setStatus] = useState("");
     const [active, setActive] = useState(false);
     const [needTap, setNeedTap] = useState(false);
-    const [paused, setPaused] = useState(false);
+    const [awake, setAwake] = useState(false);
     const [replying, setReplying] = useState(false);
     const [note, setNote] = useState<Note | null>(null);
     const orbRef = useRef<HTMLButtonElement>(null);
@@ -112,7 +132,7 @@ export default function VoicePage() {
         nextTime: 0,
         sources: new Set(),
         active: false,
-        paused: false,
+        awake: false,
         inLevel: 0,
         reconnecting: false,
         attempts: 0,
@@ -138,6 +158,19 @@ export default function VoicePage() {
         setReplying(false);
     };
 
+    /** 불린 것을 알아들었다는 짧은 알림음 (화면을 보지 않으므로) */
+    const beep = () => {
+        const ctx = r.current.ctx;
+        if (!ctx) return;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        gain.gain.value = 0.06;
+        osc.frequency.value = 880;
+        osc.connect(gain).connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.08);
+    };
+
     const play = (b64: string) => {
         const c = r.current;
         const ctx = c.ctx;
@@ -155,8 +188,66 @@ export default function VoicePage() {
         c.sources.add(src);
         src.onended = () => {
             c.sources.delete(src);
-            if (c.sources.size === 0) setReplying(false);
+            if (c.sources.size === 0) {
+                setReplying(false);
+                // 답이 끝난 뒤 이름 없이 이어 물을 수 있게 잠시 열어 둔다
+                c.gate?.extend(Date.now(), FOLLOW_UP_MS);
+            }
         };
+    };
+
+    // ---------- 호출 ----------
+    const wakeUp = () => {
+        if (r.current.gate?.wake(Date.now())) beep();
+    };
+
+    const startRecognition = () => {
+        const c = r.current;
+        const rec = createRecognition();
+        if (!rec) {
+            setNote({ text: `이 브라우저는 "${WAKE_NAME}" 호출을 알아듣지 못해요. 원을 눌러 말하세요.`, tone: "warn" });
+            return;
+        }
+        rec.lang = "ko-KR";
+        rec.continuous = true;
+        rec.interimResults = true;
+        rec.onresult = (e) => {
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+                if (WAKE_PATTERN.test(e.results[i][0].transcript)) return wakeUp();
+            }
+        };
+        rec.onerror = (e) => {
+            if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+                c.recognition = undefined;
+                setNote({ text: `음성 인식 권한이 없어 "${WAKE_NAME}" 호출을 쓸 수 없어요. 원을 눌러 말하세요.`, tone: "warn" });
+            }
+        };
+        // 브라우저 음성 인식은 조용하거나 오래되면 스스로 끝나므로 통화 중에는 다시 켠다
+        rec.onend = () => {
+            if (c.active && c.recognition === rec) {
+                setTimeout(() => {
+                    if (c.active && c.recognition === rec) {
+                        try {
+                            rec.start();
+                        } catch {}
+                    }
+                }, 300);
+            }
+        };
+        c.recognition = rec;
+        try {
+            rec.start();
+        } catch {}
+    };
+
+    const stopRecognition = () => {
+        const rec = r.current.recognition;
+        r.current.recognition = undefined;
+        if (!rec) return;
+        rec.onend = null;
+        try {
+            rec.abort();
+        } catch {}
     };
 
     // ---------- 도구 ----------
@@ -182,7 +273,11 @@ export default function VoicePage() {
     };
 
     const onMessage = (msg: LiveServerMessage) => {
-        if (msg.toolCall) handleToolCall(msg.toolCall);
+        if (msg.toolCall) {
+            // 도구 결과를 기다리는 동안 문이 닫혀 답이 끊기지 않게
+            r.current.gate?.extend(Date.now(), FOLLOW_UP_MS);
+            handleToolCall(msg.toolCall);
+        }
 
         const sc = msg.serverContent;
         if (!sc) return;
@@ -232,15 +327,27 @@ export default function VoicePage() {
         });
         c.stream = stream;
 
+        // 부르기 전에는 아무것도 보내지 않는다 (보내는 오디오 양이 곧 요금)
+        const gate = new WakeGate({
+            send: (chunk) => {
+                try {
+                    c.session?.sendRealtimeInput({ audio: { data: toBase64(chunk), mimeType: "audio/pcm;rate=16000" } });
+                } catch {}
+            },
+            close: () => {
+                try {
+                    c.session?.sendRealtimeInput({ audioStreamEnd: true });
+                } catch {}
+            },
+        });
+        c.gate = gate;
+
         const source = ctx.createMediaStreamSource(stream);
         const node = new AudioWorkletNode(ctx, "pcm-recorder");
-        // 이름 호출을 Gemini가 판단하므로 듣기를 멈추지 않은 동안은 계속 보낸다
         node.port.onmessage = (e) => {
-            c.inLevel = rms(e.data);
-            if (c.paused || !c.session) return;
-            try {
-                c.session.sendRealtimeInput({ audio: { data: toBase64(e.data), mimeType: "audio/pcm;rate=16000" } });
-            } catch {}
+            const level = rms(e.data);
+            c.inLevel = level;
+            gate.feed(e.data, level, Date.now(), c.sources.size > 0);
         };
         c.node = node;
 
@@ -256,10 +363,14 @@ export default function VoicePage() {
 
         const samples = new Float32Array(out.fftSize);
         const loop = () => {
+            if (gate.open !== c.awake) {
+                c.awake = gate.open;
+                setAwake(gate.open);
+            }
             out.getFloatTimeDomainData(samples);
             let sum = 0;
             for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
-            const level = c.sources.size > 0 ? Math.sqrt(sum / samples.length) : c.paused ? 0 : c.inLevel;
+            const level = c.sources.size > 0 ? Math.sqrt(sum / samples.length) : c.inLevel;
             orbRef.current?.style.setProperty("--level", Math.min(1, level * 6).toFixed(3));
             c.raf = requestAnimationFrame(loop);
         };
@@ -270,11 +381,13 @@ export default function VoicePage() {
         const c = r.current;
         if (c.raf) cancelAnimationFrame(c.raf);
         orbRef.current?.style.setProperty("--level", "0");
+        c.gate?.reset();
         c.node?.disconnect();
         c.stream?.getTracks().forEach((t) => t.stop());
         stopPlayback();
         c.ctx?.close().catch(() => {});
-        Object.assign(c, { ctx: undefined, stream: undefined, node: undefined, out: undefined, raf: undefined, inLevel: 0 });
+        Object.assign(c, { ctx: undefined, stream: undefined, node: undefined, out: undefined, gate: undefined, raf: undefined, inLevel: 0, awake: false });
+        setAwake(false);
     };
 
     // ---------- Gemini 세션 (탭 불필요) ----------
@@ -325,9 +438,8 @@ export default function VoicePage() {
                     tools: [{ functionDeclarations: c.tools ?? LOCAL_DECLARATIONS }],
                     inputAudioTranscription: {},
                     outputAudioTranscription: {},
-                    // 자기에게 한 말이 아니면 답하지 않는다 (이름 호출)
+                    // 잘못 알아듣고 열렸을 때 주변 대화에는 답하지 않게
                     proactivity: { proactiveAudio: true },
-                    // 마이크를 계속 보내 대화가 빨리 길어지므로 오래된 부분부터 덜어 낸다
                     contextWindowCompression: { slidingWindow: {} },
                 },
                 callbacks: {
@@ -359,23 +471,24 @@ export default function VoicePage() {
     const start = async () => {
         const c = r.current;
         c.active = true;
-        c.paused = false;
         c.attempts = 0;
         setActive(true);
-        setPaused(false);
         setNeedTap(false);
         setNote(null);
         beginCall();
         try {
             setStatus("연결 중");
+            stopRecognition();
             closeSession();
             teardownAudio();
             await setupAudio();
             await connectSession();
+            startRecognition();
             await requestWakeLock();
         } catch (e) {
             c.active = false;
             setActive(false);
+            stopRecognition();
             closeSession();
             teardownAudio();
             releaseWakeLock();
@@ -426,23 +539,12 @@ export default function VoicePage() {
         r.current.active = false;
         setActive(false);
         setNeedTap(false);
-        setPaused(false);
+        stopRecognition();
         closeSession();
         teardownAudio();
         releaseWakeLock();
         setStatus("");
         finishCall();
-    };
-
-    const togglePause = () => {
-        const c = r.current;
-        c.paused = !c.paused;
-        setPaused(c.paused);
-        if (c.paused) {
-            try {
-                c.session?.sendRealtimeInput({ audioStreamEnd: true });
-            } catch {}
-        }
     };
 
     useEffect(() => {
@@ -451,6 +553,10 @@ export default function VoicePage() {
         const onVisible = () => {
             if (document.visibilityState === "hidden") saveCall();
             if (document.visibilityState !== "visible" || !r.current.active) return;
+            // 백그라운드에서 끝난 음성 인식을 다시 켠다 (이미 켜져 있으면 무시된다)
+            try {
+                r.current.recognition?.start();
+            } catch {}
             const problems: string[] = [];
             if (!r.current.session) problems.push("연결");
             if (!audioHealthy()) problems.push("오디오/마이크");
@@ -466,15 +572,14 @@ export default function VoicePage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const phase = !active || needTap ? "idle" : paused ? "paused" : replying ? "replying" : "listening";
+    const phase = !active || needTap ? "idle" : replying ? "replying" : awake ? "listening" : "standby";
     const label = {
         idle: needTap ? "눌러서 다시 시작" : "눌러서 통화 시작",
-        paused: "듣기를 멈췄어요",
+        standby: `"${WAKE_NAME}야" 하고 불러 주세요`,
+        listening: "듣고 있어요",
         replying: "답하는 중",
-        listening: `"${WAKE_NAME}야" 하고 불러 주세요`,
     }[phase];
-    const orbAction = { idle: label, paused: "다시 듣기", replying: "듣기 멈추기", listening: "듣기 멈추기" }[phase];
-    const dot = { idle: "bg-gray-400", paused: "bg-amber-500", replying: "bg-violet-600", listening: "bg-green-600" }[phase];
+    const dot = { idle: "bg-gray-400", standby: "bg-green-600", listening: "bg-violet-600", replying: "bg-violet-600" }[phase];
 
     return (
         <main className="mx-auto flex h-dvh w-full max-w-md flex-col px-5 pt-4 pb-8">
@@ -490,12 +595,18 @@ export default function VoicePage() {
             </header>
 
             <div className="flex flex-1 flex-col items-center justify-center gap-6">
-                <button ref={orbRef} onClick={() => (phase === "idle" ? start() : togglePause())} aria-label={orbAction} data-phase={phase} className="orb">
+                <button
+                    ref={orbRef}
+                    onClick={() => (phase === "idle" ? start() : wakeUp())}
+                    aria-label={phase === "idle" ? label : "이름 없이 바로 말하기"}
+                    data-phase={phase}
+                    className="orb"
+                >
                     <span className="orb-shape">
                         <span className="orb-fill" />
                     </span>
                 </button>
-                <p className="min-h-5 text-sm text-gray-600">{phase === "idle" ? "" : phase === "paused" ? "원을 누르면 다시 들어요" : "원을 누르면 듣기를 멈춰요"}</p>
+                <p className="min-h-5 text-sm text-gray-600">{phase === "standby" ? "원을 누르면 이름 없이 바로 말할 수 있어요" : ""}</p>
             </div>
 
             {note && <p className={`mb-5 self-center rounded-full px-4 py-2 text-center text-sm ${NOTE_CLASS[note.tone]}`}>{note.text}</p>}
