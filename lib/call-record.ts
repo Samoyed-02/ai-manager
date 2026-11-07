@@ -8,11 +8,15 @@ const KEY = "pendingCalls";
 // 서버 제한: voice/VoiceCallController.kt
 const MAX_TURNS = 500;
 const MAX_TEXT = 5000;
+// 이만큼 쉬었다 이어진 사용자 말은 다른 발화로 본다 (주변 대화와 호출을 나누려고)
+const USER_GAP_MS = 2000;
 
 let active: CallRecord | null = null;
 let memory: CallRecord[] = []; // localStorage를 못 쓸 때의 대체 보관소
 let memoryOnly = false;
 let queue: Promise<FlushResult> = Promise.resolve(null);
+let open = false; // 마지막 발화에 이어 붙일 수 있는지
+let lastAt = 0;
 
 // 비어 있는 localStorage는 "보낼 것 없음"이다. memory로 대신하면 다른 탭이 이미 보낸 기록을 다시 보낸다
 function read(): CallRecord[] {
@@ -53,8 +57,15 @@ function splitText(text: string) {
     return parts.filter((p) => p.trim());
 }
 
+/**
+ * 마이크가 늘 켜져 있어 주변 말도 받아 적힌다. AI가 바로 답한 사용자 발화만 남겨
+ * 호출하지 않은 대화가 기록·기억에 들어가지 않게 한다
+ */
 function normalize(turns: Turn[]) {
-    return turns.flatMap((t) => splitText(t.text).map((text) => ({ role: t.role, text })));
+    return turns
+        .filter((t) => t.text.trim())
+        .filter((t, i, all) => t.role === "assistant" || all[i + 1]?.role === "assistant")
+        .flatMap((t) => splitText(t.text).map((text) => ({ role: t.role, text })));
 }
 
 function replace(startedAt: string, call?: CallRecord) {
@@ -67,12 +78,20 @@ export function beginCall() {
     active ??= { startedAt: new Date().toISOString(), turns: [] };
 }
 
-/** 받아쓰기 조각을 이어 붙이고, 역할이 바뀌면 새 발화로 나눈다 */
-export function addFragment(role: Turn["role"], text: string) {
+/** 받아쓰기 조각을 이어 붙인다. 역할이 바뀌거나, breakTurn 뒤거나, 사용자 말이 한동안 끊겼으면 새 발화로 나눈다 */
+export function addFragment(role: Turn["role"], text: string, now = Date.now()) {
     if (!active) return;
     const last = active.turns[active.turns.length - 1];
-    if (last?.role === role) last.text += text;
+    const continues = open && last?.role === role && (role === "assistant" || now - lastAt < USER_GAP_MS);
+    if (continues) last.text += text;
     else active.turns.push({ role, text });
+    open = true;
+    lastAt = now;
+}
+
+/** AI 답변이 끝나거나 끊기면 다음 조각은 새 발화로 시작한다 */
+export function breakTurn() {
+    open = false;
 }
 
 export function saveCall() {
@@ -84,6 +103,7 @@ export function endCall() {
     active.endedAt = new Date().toISOString();
     saveCall();
     active = null;
+    open = false;
 }
 
 async function run(send: Send): Promise<FlushResult> {
