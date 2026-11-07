@@ -74,7 +74,7 @@ export default function DocsPage() {
         return (
             <main className="mx-auto w-full max-w-2xl p-4">
                 <div className="mb-4 flex items-center justify-between gap-2">
-                    <button onClick={() => setDoc(null)} className="text-sm text-gray-400">
+                    <button onClick={() => setDoc(null)} className="text-sm text-gray-600">
                         ← 목록
                     </button>
                     <div className="flex gap-2">
@@ -100,7 +100,7 @@ export default function DocsPage() {
     return (
         <Page title="문서함">
             <ErrorText>{error || tasks.error || docs.error}</ErrorText>
-            {tasks.items?.length === 0 && <p className="text-sm text-gray-500">맡긴 작업이 없습니다.</p>}
+            {tasks.items?.length === 0 && <p className="text-sm text-gray-600">맡긴 작업이 없습니다.</p>}
 
             <ul className="space-y-2">
                 {tasks.items?.map((t) => (
@@ -110,17 +110,17 @@ export default function DocsPage() {
                             onClick={() => t.documentId && openDoc(t.documentId)}
                             className="min-w-0 flex-1 text-left disabled:cursor-default"
                         >
-                            <div className="mb-1 flex items-center justify-between gap-2 text-xs text-gray-400">
+                            <div className="mb-1 flex items-center justify-between gap-2 text-xs text-gray-600">
                                 <span>{TASK_STATUS_LABEL[t.status]}</span>
                                 <span>{formatDateTime(t.createdAt)}</span>
                             </div>
                             <p className="line-clamp-2 text-sm">{t.instruction}</p>
-                            {t.status === "DONE" && !t.documentId && <p className="mt-1 text-xs text-gray-500">문서 삭제됨</p>}
+                            {t.status === "DONE" && !t.documentId && <p className="mt-1 text-xs text-gray-600">문서 삭제됨</p>}
                             {t.status === "FAILED" && t.error && (
-                                <p className="mt-1 line-clamp-2 text-xs text-red-400">{t.error}</p>
+                                <p className="mt-1 line-clamp-2 text-xs text-red-600">{t.error}</p>
                             )}
                         </button>
-                        <button onClick={() => deleteTask(t.id)} aria-label="작업 삭제" className="px-1 text-sm text-gray-500">
+                        <button onClick={() => deleteTask(t.id)} aria-label="작업 삭제" className="px-1 text-sm text-gray-600">
                             ✕
                         </button>
                     </li>
@@ -129,12 +129,12 @@ export default function DocsPage() {
 
             {otherDocs.length > 0 && (
                 <>
-                    <h2 className="mt-6 mb-2 text-sm font-bold text-gray-400">그 밖의 문서</h2>
+                    <h2 className="mt-6 mb-2 text-sm font-bold text-gray-600">그 밖의 문서</h2>
                     <ul className="space-y-2">
                         {otherDocs.map((d) => (
                             <li key={d.id}>
                                 <button onClick={() => openDoc(d.id)} className={`${cardClass} w-full text-left`}>
-                                    <div className="mb-1 text-xs text-gray-400">{formatDateTime(d.createdAt)}</div>
+                                    <div className="mb-1 text-xs text-gray-600">{formatDateTime(d.createdAt)}</div>
                                     <p className="line-clamp-2 text-sm">{d.title}</p>
                                 </button>
                             </li>

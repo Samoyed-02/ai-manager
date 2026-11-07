@@ -34,7 +34,7 @@ export default function ReviewsPage() {
         const s = review.stats;
         return (
             <Page title={`주간 회고 ${review.periodStart} ~ ${review.periodEnd}`}>
-                <button onClick={() => setReview(null)} className="mb-4 text-sm text-gray-400">
+                <button onClick={() => setReview(null)} className="mb-4 text-sm text-gray-600">
                     ← 목록
                 </button>
                 <div className={`${cardClass} mb-4 space-y-1 text-sm`}>
@@ -61,7 +61,7 @@ export default function ReviewsPage() {
     return (
         <Page title="주간 회고">
             <ErrorText>{error || list.error}</ErrorText>
-            {list.items?.length === 0 && <p className="text-sm text-gray-500">아직 회고가 없습니다. 루틴에서 회고 루틴을 만들면 쌓입니다.</p>}
+            {list.items?.length === 0 && <p className="text-sm text-gray-600">아직 회고가 없습니다. 루틴에서 회고 루틴을 만들면 쌓입니다.</p>}
             <ul className="space-y-2">
                 {list.items?.map((r) => (
                     <li key={r.id}>

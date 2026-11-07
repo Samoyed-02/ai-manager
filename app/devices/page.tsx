@@ -40,10 +40,10 @@ export default function DevicesPage() {
                         <div className="min-w-0 text-sm">
                             <p className="font-bold">
                                 {s.deviceName}
-                                {s.current && <span className="ml-2 text-xs text-green-400">이 기기</span>}
+                                {s.current && <span className="ml-2 text-xs text-green-700">이 기기</span>}
                             </p>
-                            <p className="text-xs text-gray-400">마지막 사용 {formatDateTime(s.lastUsedAt)}</p>
-                            <p className="text-xs text-gray-500">로그인 {formatDateTime(s.createdAt)} · 만료 {formatDateTime(s.expiresAt)}</p>
+                            <p className="text-xs text-gray-600">마지막 사용 {formatDateTime(s.lastUsedAt)}</p>
+                            <p className="text-xs text-gray-600">로그인 {formatDateTime(s.createdAt)} · 만료 {formatDateTime(s.expiresAt)}</p>
                         </div>
                         {s.current ? (
                             <button onClick={() => window.confirm("이 기기에서 로그아웃할까요?") && logout()} className={subtleButton}>

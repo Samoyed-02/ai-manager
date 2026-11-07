@@ -44,20 +44,20 @@ function TaskCard({ taskId, instruction }: TaskRef) {
     }, [taskId]);
 
     return (
-        <div className="not-prose my-2 rounded-lg border border-gray-700 p-3 text-sm">
-            <div className="mb-1 text-xs text-gray-400">
+        <div className="not-prose my-2 rounded-lg border border-gray-200 p-3 text-sm">
+            <div className="mb-1 text-xs text-gray-600">
                 📄 문서 작업 · {gone ? "작업이 삭제됐어요" : task ? TASK_STATUS_LABEL[task.status] : "확인 중…"}
             </div>
             <p className="line-clamp-2">{instruction}</p>
             {task?.status === "DONE" &&
                 (task.documentId ? (
-                    <Link href="/docs" className="mt-1 inline-block text-blue-400">
+                    <Link href="/docs" className="mt-1 inline-block text-violet-700">
                         문서함에서 보기 →
                     </Link>
                 ) : (
-                    <p className="mt-1 text-gray-500">문서 삭제됨</p>
+                    <p className="mt-1 text-gray-600">문서 삭제됨</p>
                 ))}
-            {task?.status === "FAILED" && task.error && <p className="mt-1 text-red-400">{task.error}</p>}
+            {task?.status === "FAILED" && task.error && <p className="mt-1 text-red-600">{task.error}</p>}
         </div>
     );
 }
@@ -159,8 +159,8 @@ export default function ChatPage() {
 
     return (
         <main className="mx-auto flex h-dvh w-full max-w-2xl flex-col">
-            <header className="flex items-center gap-2 border-b border-gray-800 p-3">
-                <Link href="/" className="text-sm text-gray-400">
+            <header className="flex items-center gap-2 border-b border-gray-200 p-3">
+                <Link href="/" className="text-sm text-gray-600">
                     ← 홈
                 </Link>
                 <select
@@ -168,7 +168,7 @@ export default function ChatPage() {
                     onChange={(e) => openConv(e.target.value)}
                     disabled={busy}
                     aria-label="대화 선택"
-                    className="min-w-0 flex-1 rounded bg-gray-900 p-2 text-sm"
+                    className="min-w-0 flex-1 rounded border border-gray-300 bg-white p-2 text-sm"
                 >
                     <option value="">새 대화</option>
                     {convs.map((c) => (
@@ -179,11 +179,11 @@ export default function ChatPage() {
                     ))}
                 </select>
                 {convId && (
-                    <button onClick={deleteConv} disabled={busy} className="rounded bg-gray-800 px-3 py-2 text-sm text-red-400 disabled:opacity-40">
+                    <button onClick={deleteConv} disabled={busy} className="rounded-lg bg-red-100 px-3 py-2 text-sm font-medium text-red-800 disabled:opacity-40">
                         삭제
                     </button>
                 )}
-                <button onClick={newConv} disabled={busy} className="rounded bg-gray-800 px-3 py-2 text-sm disabled:opacity-40">
+                <button onClick={newConv} disabled={busy} className="rounded-lg bg-violet-100 px-3 py-2 text-sm font-medium text-violet-900 disabled:opacity-40">
                     + 새 대화
                 </button>
             </header>
@@ -191,7 +191,7 @@ export default function ChatPage() {
             <div className="flex-1 space-y-4 overflow-y-auto p-4">
                 {msgs.map((m, i) =>
                     m.role === "user" ? (
-                        <div key={i} className="ml-auto max-w-[85%] whitespace-pre-wrap rounded-2xl bg-blue-600 px-4 py-2 text-white">
+                        <div key={i} className="ml-auto max-w-[85%] whitespace-pre-wrap rounded-2xl bg-violet-600 px-4 py-2 text-white">
                             {m.content}
                         </div>
                     ) : (
@@ -201,23 +201,23 @@ export default function ChatPage() {
                             </div>
                             {m.tasks?.map((t) => <TaskCard key={t.taskId} {...t} />)}
                             {m.actions && m.actions.length > 0 && (
-                                <ul className="mt-2 space-y-0.5 text-xs text-gray-400">
+                                <ul className="mt-2 space-y-0.5 text-xs text-gray-600">
                                     {m.actions.map((a, j) => (
                                         <li key={j}>🛠️ {a}</li>
                                     ))}
                                 </ul>
                             )}
-                            {m.status && STATUS_NOTE[m.status] && <p className="mt-1 text-xs text-amber-400">{STATUS_NOTE[m.status]}</p>}
+                            {m.status && STATUS_NOTE[m.status] && <p className="mt-1 text-xs text-amber-700">{STATUS_NOTE[m.status]}</p>}
                         </div>
                     ),
                 )}
-                <p role="alert" className="text-sm text-red-400 empty:hidden">
+                <p role="alert" className="text-sm text-red-600 empty:hidden">
                     {error || form.error}
                 </p>
                 <div ref={bottom} />
             </div>
 
-            <div className="border-t border-gray-800 p-3">
+            <div className="border-t border-gray-200 p-3">
                 <div className="flex gap-2">
                     <textarea
                         value={input}
@@ -234,17 +234,17 @@ export default function ChatPage() {
                         aria-label="메시지"
                         aria-invalid={!!form.fields.message}
                         placeholder="메시지 입력 (Shift+Enter 줄바꿈)"
-                        className="flex-1 resize-none rounded-xl bg-gray-900 p-3 text-sm outline-none read-only:opacity-60"
+                        className="flex-1 resize-none rounded-xl border border-gray-300 bg-white p-3 text-sm outline-none read-only:opacity-60"
                     />
                     <button
                         onClick={send}
                         disabled={busy}
-                        className="rounded-xl bg-blue-600 px-4 font-bold text-white disabled:opacity-40"
+                        className="rounded-xl bg-violet-600 px-4 font-bold text-white disabled:opacity-40"
                     >
                         {busy ? "…" : "전송"}
                     </button>
                 </div>
-                {form.fields.message && <p className="mt-1 text-sm text-red-400">{form.fields.message}</p>}
+                {form.fields.message && <p className="mt-1 text-sm text-red-600">{form.fields.message}</p>}
             </div>
         </main>
     );

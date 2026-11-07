@@ -108,7 +108,7 @@ export default function RoutinesPage() {
                     <input type="time" required value={draft.time} onChange={(e) => setDraft({ ...draft, time: e.target.value })} className={inputClass} />
                 </Field>
                 <fieldset className="text-sm">
-                    <legend className="mb-1 text-gray-400">요일 (선택하지 않으면 매일)</legend>
+                    <legend className="mb-1 text-gray-600">요일 (선택하지 않으면 매일)</legend>
                     <div className="flex flex-wrap gap-3">
                         {DAYS.map(([code, label]) => (
                             <label key={code} className="flex items-center gap-1">
@@ -117,7 +117,7 @@ export default function RoutinesPage() {
                             </label>
                         ))}
                     </div>
-                    {form.fields.days && <span className="mt-1 block text-red-400">{form.fields.days}</span>}
+                    {form.fields.days && <span className="mt-1 block text-red-600">{form.fields.days}</span>}
                 </fieldset>
                 {editing && (
                     <label className="flex items-center gap-2 text-sm">
@@ -139,11 +139,11 @@ export default function RoutinesPage() {
             </form>
 
             <ErrorText>{error || routines.error}</ErrorText>
-            {routines.items?.length === 0 && <p className="text-sm text-gray-500">루틴이 없습니다.</p>}
+            {routines.items?.length === 0 && <p className="text-sm text-gray-600">루틴이 없습니다.</p>}
             <ul className="space-y-2">
                 {routines.items?.map((r) => (
                     <li key={r.id} className={`${cardClass} ${r.enabled ? "" : "opacity-60"}`}>
-                        <div className="mb-1 flex justify-between gap-2 text-xs text-gray-400">
+                        <div className="mb-1 flex justify-between gap-2 text-xs text-gray-600">
                             <span>
                                 {KINDS[r.kind].label} · {r.schedule}
                                 {!r.enabled && " · 꺼짐"}
@@ -151,7 +151,7 @@ export default function RoutinesPage() {
                             {r.enabled && <span>다음 {formatDateTime(r.nextRunAt)}</span>}
                         </div>
                         <p className="font-bold">{r.title}</p>
-                        <p className="mb-2 line-clamp-2 text-sm text-gray-300">{r.message}</p>
+                        <p className="mb-2 line-clamp-2 text-sm text-gray-700">{r.message}</p>
                         <div className="flex gap-2">
                             <button onClick={() => run(() => sendJson(`/routines/${r.id}`, "PUT", { enabled: !r.enabled }))} className={subtleButton}>
                                 {r.enabled ? "끄기" : "켜기"}

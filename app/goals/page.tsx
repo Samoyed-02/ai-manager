@@ -112,9 +112,9 @@ export default function GoalsPage() {
                 </div>
             </form>
 
-            <label className="mb-3 flex items-center gap-2 text-sm text-gray-400">
+            <label className="mb-3 flex items-center gap-2 text-sm text-gray-600">
                 상태
-                <select value={filter} onChange={(e) => setFilter(e.target.value as Status | "")} className="rounded bg-gray-900 p-1.5">
+                <select value={filter} onChange={(e) => setFilter(e.target.value as Status | "")} className="rounded border border-gray-300 bg-white p-1.5">
                     <option value="">전체</option>
                     {Object.entries(STATUSES).map(([k, v]) => (
                         <option key={k} value={k}>
@@ -124,15 +124,15 @@ export default function GoalsPage() {
                 </select>
             </label>
             <ErrorText>{goals.error}</ErrorText>
-            {goals.items?.length === 0 && <p className="text-sm text-gray-500">목표가 없습니다.</p>}
+            {goals.items?.length === 0 && <p className="text-sm text-gray-600">목표가 없습니다.</p>}
             <ul className="space-y-2">
                 {goals.items?.map((g) => (
                     <li key={g.id} className={cardClass}>
-                        <div className="mb-1 text-xs text-gray-400">
+                        <div className="mb-1 text-xs text-gray-600">
                             {ACTIVITY_CATEGORIES[g.category]} · {STATUSES[g.status]}
                         </div>
                         <p className="text-sm font-bold">{g.progress}</p>
-                        {g.description && <p className="mt-1 line-clamp-3 text-sm text-gray-300">{g.description}</p>}
+                        {g.description && <p className="mt-1 line-clamp-3 text-sm text-gray-700">{g.description}</p>}
                         <div className="mt-2 flex flex-wrap gap-2">
                             {g.status === "ACTIVE" ? (
                                 <>

@@ -86,17 +86,17 @@ export default function MicTestPage() {
     return (
         <main className="mx-auto max-w-md p-4 font-mono text-sm">
             <h1 className="mb-3 text-lg font-bold">Mic / Lock Test</h1>
-            <Link href="/" className="mb-2 inline-block text-sm text-gray-400">← 홈</Link>
+            <Link href="/" className="mb-2 inline-block text-sm text-gray-600">← 홈</Link>
             <button
                 onClick={running ? stop : start}
-                className="mb-4 w-full rounded-lg bg-blue-600 py-3 font-bold text-white"
+                className="mb-4 w-full rounded-lg bg-violet-600 py-3 font-bold text-white"
             >
                 {running ? "정지" : "시작"}
             </button>
             <ul className="space-y-1">
                 {logs.map((l, i) => (
                     <li key={i}>
-                        <span className="text-gray-500">{l.t}</span> {l.msg}
+                        <span className="text-gray-600">{l.t}</span> {l.msg}
                     </li>
                 ))}
             </ul>

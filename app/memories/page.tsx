@@ -62,7 +62,7 @@ export default function MemoriesPage() {
 
     return (
         <Page title="기억 관리">
-            <p className="mb-4 text-sm text-gray-400">AI가 대화에서 기억한 내용입니다. 모든 대화와 통화의 맥락에 들어갑니다.</p>
+            <p className="mb-4 text-sm text-gray-600">AI가 대화에서 기억한 내용입니다. 모든 대화와 통화의 맥락에 들어갑니다.</p>
 
             <form onSubmit={save} className={`${cardClass} mb-6 space-y-3`}>
                 <Field label="분류" error={form.fields.category}>
@@ -97,9 +97,9 @@ export default function MemoriesPage() {
                 </div>
             </form>
 
-            <label className="mb-3 flex items-center gap-2 text-sm text-gray-400">
+            <label className="mb-3 flex items-center gap-2 text-sm text-gray-600">
                 분류
-                <select value={filter} onChange={(e) => setFilter(e.target.value as Category | "")} className="rounded bg-gray-900 p-1.5">
+                <select value={filter} onChange={(e) => setFilter(e.target.value as Category | "")} className="rounded border border-gray-300 bg-white p-1.5">
                     <option value="">전체</option>
                     {Object.entries(CATEGORIES).map(([k, v]) => (
                         <option key={k} value={k}>
@@ -109,11 +109,11 @@ export default function MemoriesPage() {
                 </select>
             </label>
             <ErrorText>{error || memories.error}</ErrorText>
-            {memories.items?.length === 0 && <p className="text-sm text-gray-500">기억이 없습니다.</p>}
+            {memories.items?.length === 0 && <p className="text-sm text-gray-600">기억이 없습니다.</p>}
             <ul className="space-y-2">
                 {memories.items?.map((m) => (
                     <li key={m.id} className={cardClass}>
-                        <div className="mb-1 flex justify-between text-xs text-gray-400">
+                        <div className="mb-1 flex justify-between text-xs text-gray-600">
                             <span>{CATEGORIES[m.category]}</span>
                             <span>{formatDateTime(m.updatedAt)}</span>
                         </div>

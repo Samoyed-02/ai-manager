@@ -25,18 +25,18 @@ export default function NotificationsPage() {
 
     return (
         <Page title="알림함">
-            <label className="mb-3 flex items-center gap-2 text-sm text-gray-400">
+            <label className="mb-3 flex items-center gap-2 text-sm text-gray-600">
                 <input type="checkbox" checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)} />
                 읽지 않은 알림만
             </label>
             <ErrorText>{error || list.error}</ErrorText>
-            {list.items?.length === 0 && <p className="text-sm text-gray-500">알림이 없습니다.</p>}
+            {list.items?.length === 0 && <p className="text-sm text-gray-600">알림이 없습니다.</p>}
             <ul className="space-y-2">
                 {list.items?.map((n) => (
                     <li key={n.id} className={`${cardClass} ${n.readAt ? "opacity-60" : ""}`}>
-                        <div className="mb-1 flex items-center justify-between gap-2 text-xs text-gray-400">
+                        <div className="mb-1 flex items-center justify-between gap-2 text-xs text-gray-600">
                             <span>
-                                {!n.readAt && <span className="mr-1 text-blue-400">●</span>}
+                                {!n.readAt && <span className="mr-1 text-violet-700">●</span>}
                                 {formatDateTime(n.createdAt)}
                             </span>
                             {!n.readAt && (

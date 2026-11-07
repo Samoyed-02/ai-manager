@@ -7,8 +7,8 @@ export default function manifest(): MetadataRoute.Manifest {
         description: "Gemini + Claude 개인 AI 매니저",
         start_url: "/",
         display: "standalone",
-        background_color: "#0a0a0a",
-        theme_color: "#0a0a0a",
+        background_color: "#ffffff",
+        theme_color: "#ffffff",
         icons: [
             { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
             { src: "/icon-512.png", sizes: "512x512", type: "image/png" },

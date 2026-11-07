@@ -1,11 +1,11 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
-/* 화면이 어두운 배경(bg-gray-900, prose-invert)을 전제로 만들어져 시스템 설정과 관계없이 다크로 고정한다 */
+/* 밝은 톤으로 고정한다. 화면들이 흰 카드·보라 강조를 전제로 만들어져 있다 */
 :root {
-  --background: #0a0a0a;
-  --foreground: #ededed;
-  color-scheme: dark;
+  --background: #ffffff;
+  --foreground: #1f1b2e;
+  color-scheme: light;
 }
 
 @theme inline {
@@ -19,4 +19,92 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ---------- 통화 화면의 원. --level(0~1)은 소리 크기로, 통화 화면이 매 프레임 넣는다 ---------- */
+.orb {
+  --level: 0;
+  --gain: 0;
+  position: relative;
+  width: 210px;
+  height: 210px;
+  padding: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  cursor: pointer;
+  transform: scale(calc(1 + var(--level) * var(--gain)));
+  transition: transform 120ms ease-out, filter 300ms;
+}
+.orb::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: rgb(109 74 255 / 0.18);
+  opacity: 0;
+}
+.orb-shape {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 9999px;
+  transition: border-radius 160ms ease-out;
+}
+.orb-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(180deg, #5b3ff0 0%, #8f79f6 30%, #cfc6f8 58%, #efecfb 80%, #ffffff 100%);
+  background-size: 100% 160%;
+  animation: orb-drift 5s ease-in-out infinite alternate;
+}
+
+/* 이름을 기다리는 중: 빛이 퍼지고, 들리는 소리에 맞춰 커지며 일렁인다 */
+.orb[data-phase="listening"] {
+  --gain: 0.12;
+}
+.orb[data-phase="listening"]::before {
+  animation: orb-ping 2.4s ease-out infinite;
+}
+.orb[data-phase="listening"] .orb-shape {
+  border-radius: calc(50% + var(--level) * 9%) calc(50% - var(--level) * 7%) calc(50% + var(--level) * 5%) calc(50% - var(--level) * 4%) /
+    calc(50% - var(--level) * 7%) calc(50% + var(--level) * 5%) calc(50% - var(--level) * 4%) calc(50% + var(--level) * 9%);
+}
+.orb[data-phase="listening"] .orb-fill,
+.orb[data-phase="replying"] .orb-fill {
+  animation-duration: 1.6s;
+}
+/* AI가 답하는 중: 천천히 돌며 목소리에 맞춰 살짝 커진다 */
+.orb[data-phase="replying"] {
+  --gain: 0.06;
+}
+.orb[data-phase="replying"] .orb-shape {
+  animation: orb-spin 7s linear infinite;
+}
+.orb[data-phase="paused"] {
+  filter: grayscale(0.85) opacity(0.6);
+}
+
+@keyframes orb-drift {
+  from { background-position: 50% 0%; }
+  to { background-position: 50% 35%; }
+}
+@keyframes orb-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes orb-ping {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.45); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orb,
+  .orb::before,
+  .orb-shape,
+  .orb-fill {
+    animation: none !important;
+    transition: none !important;
+  }
 }

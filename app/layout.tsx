@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     title: "AI 매니저",
-    statusBarStyle: "black-translucent",
+    statusBarStyle: "default",
   },
 };
 
