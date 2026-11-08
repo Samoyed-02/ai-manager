@@ -1,7 +1,7 @@
 # AI Manager (웹)
 
 채팅과 음성 통화를 오가도 같은 기억과 도구를 쓰는 개인 AI 비서의 웹 앱(PWA)입니다.
-서버는 [ai-manager-server](https://github.com/Samoyed-02/ai-manager-server) (Kotlin, Spring Boot, Claude API)에 있습니다.
+서버(Kotlin, Spring Boot, Claude API)는 비공개 저장소에 있습니다.
 
 ## 주요 기능
 
